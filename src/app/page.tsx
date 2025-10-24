@@ -29,11 +29,9 @@ export default function Home() {
   // ---- Stream Call state ----
   const [apiKey, setApiKey] = useState(envStreamApiKey);
   const [apiSecret, setApiSecret] = useState(envStreamApiSecret);
-  const [userId, setUserId] = useState(
-    "user-" + Math.random().toString(36).slice(2, 8)
-  );
+  const [userId, setUserId] = useState(Math.random().toString(36).slice(2, 36));
   const [userName] = useState("Demo User");
-  const [callId, setCallId] = useState("poc-call");
+  const [callId, setCallId] = useState(Math.random().toString(36).slice(2, 36));
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<StreamCallType | null>(null);
   // kept for possible UI feedback in future; not currently used
@@ -361,25 +359,68 @@ export default function Home() {
       rec.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.push(e.data);
       };
-      rec.onstop = () => {
-        const blob = new Blob(chunks, { type: "video/webm" });
-        const url = URL.createObjectURL(blob);
-        // Auto-download
-        const ts = new Date();
-        const name = `session-${ts.getFullYear()}${String(
-          ts.getMonth() + 1
-        ).padStart(2, "0")}${String(ts.getDate()).padStart(2, "0")}-${String(
-          ts.getHours()
-        ).padStart(2, "0")}${String(ts.getMinutes()).padStart(2, "0")}${String(
-          ts.getSeconds()
-        ).padStart(2, "0")}.webm`;
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setSessionState("idle");
+      rec.onstop = async () => {
+        try {
+          const blob = new Blob(chunks, { type: "video/webm" });
+          const ts = new Date();
+          const fileName = `session-${ts.getFullYear()}${String(
+            ts.getMonth() + 1
+          ).padStart(2, "0")}${String(ts.getDate()).padStart(2, "0")}-${String(
+            ts.getHours()
+          ).padStart(2, "0")}${String(ts.getMinutes()).padStart(
+            2,
+            "0"
+          )}${String(ts.getSeconds()).padStart(2, "0")}.webm`;
+          // Request a presigned URL then upload
+          const presign = await fetch("/api/upload-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename: fileName,
+              contentType: blob.type,
+            }),
+          });
+          if (!presign.ok) throw new Error("Failed to get upload URL");
+          const { url, key, bucket } = await presign.json();
+          const putRes = await fetch(url, {
+            method: "PUT",
+            headers: { "Content-Type": blob.type },
+            body: blob,
+          });
+          if (!putRes.ok) throw new Error("Upload failed");
+          console.log("Uploaded to S3", { bucket, key });
+        } catch (err) {
+          console.error("Upload error", err);
+          // Fallback: offer local download so the recording isn't lost
+          try {
+            const ts = new Date();
+            const fallbackName = `session-${ts.getFullYear()}${String(
+              ts.getMonth() + 1
+            ).padStart(2, "0")}${String(ts.getDate()).padStart(
+              2,
+              "0"
+            )}-${String(ts.getHours()).padStart(2, "0")}${String(
+              ts.getMinutes()
+            ).padStart(2, "0")}${String(ts.getSeconds()).padStart(
+              2,
+              "0"
+            )}-local.webm`;
+            const blob = new Blob(chunks, { type: "video/webm" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = fallbackName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+          } catch {}
+          alert(
+            "Upload to S3 failed. The recording was downloaded locally instead. For S3, check bucket CORS and server logs."
+          );
+        } finally {
+          setSessionState("idle");
+        }
       };
       mixedRecorderRef.current = rec;
       rec.start(250);
