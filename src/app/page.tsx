@@ -153,7 +153,7 @@ export default function Home() {
       setRtState("connecting");
       try {
         // Selection from UI
-        const selectedVoice = voiceGender === "male" ? "ash" : "verse";
+        const selectedVoice = voiceGender === "male" ? "ash" : "alloy";
         const langInstruction =
           language === "japanese" ? "Japanese" : "English.";
         const questionBlock = questions
