@@ -155,9 +155,9 @@ export default function Home() {
       setRtState("connecting");
       try {
         // Selection from UI
-        const selectedVoice = voiceGender === "male" ? "alloy" : "verse";
+        const selectedVoice = voiceGender === "male" ? "ash" : "verse";
         const langInstruction =
-          language === "japanese" ? "Speak Japanese." : "Speak English.";
+          language === "japanese" ? "Japanese" : "English.";
         const questionBlock = questions
           .split(/\r?\n/)
           .filter((q) => q.trim().length > 0)
@@ -218,7 +218,13 @@ export default function Home() {
                 type: "session.update",
                 session: {
                   voice: selectedVoice,
-                  instructions: `You are an HR interviewer. ${langInstruction} Ask questions one by one, allow time for spoken answers, and provide brief follow-ups when helpful. Only proceed to the next question after the candidate stops speaking. The interview questions are: ${questionBlock}`,
+                  instructions:
+                    `You should speak only in ${langInstruction}. ` +
+                    `You are an HR interviewer. ` +
+                    `Ask questions one by one, allow time for spoken answers, ` +
+                    `and provide brief follow-ups when helpful. Only proceed ` +
+                    `to the next question after the candidate stops speaking. ` +
+                    `The interview questions are: ${questionBlock}`,
                 },
               })
             );
@@ -228,6 +234,7 @@ export default function Home() {
                 type: "response.create",
                 response: {
                   instructions:
+                    `You should speak only in ${langInstruction}. ` +
                     "Start with a short greeting, then ask the first interview question.",
                   modalities: ["audio"],
                   conversation: "default",
