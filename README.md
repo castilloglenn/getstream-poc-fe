@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Stream Video + OpenAI Realtime — Frontend-only POC
 
-## Getting Started
+This repo contains a minimal Next.js app (App Router) that:
 
-First, run the development server:
+- Joins a Stream video call right from the browser
+- Connects to OpenAI Realtime for a live, talking HR interviewer
+- Records a single video file of your camera + mixed audio (mic + assistant)
+
+Everything runs in the browser only for quick testing. Do not use this setup in production.
+
+## Quick start (pnpm)
+
+1. Install deps
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Create `.env.local` (frontend-only, insecure for POC)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Stream (POC: exposes secret to client)
+NEXT_PUBLIC_STREAM_API_KEY=your_stream_api_key
+NEXT_PUBLIC_STREAM_API_SECRET=your_stream_api_secret
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# OpenAI (POC: exposes key to client)
+NEXT_PUBLIC_OPENAI_API_KEY=sk-...
+```
 
-## Learn More
+3. Run the dev server
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+pnpm dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open http://localhost:3000
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## How to use the PoC
 
-## Deploy on Vercel
+The UI is a single page in `src/app/page.tsx`.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Configuration
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Ensure your Stream and OpenAI keys are filled
+- Choose voice gender (Male/Female)
+- Choose language (English/Japanese)
+- Paste your interview questions (one per line)
+
+2. Start session
+
+- Click “Start session”
+- The app will ask for mic/camera permissions
+- It will:
+  - Start OpenAI Realtime with your voice + language settings
+  - Join a Stream call and show a minimal call UI
+  - Begin recording one WebM video: camera video + mixed audio
+
+3. Stop and save
+
+- Click “Stop & save” to end everything
+- A `.webm` file is downloaded automatically
+
+## What’s included
+
+- Stream Video React SDK UI (SpeakerLayout + CallControls)
+- OpenAI Realtime WebRTC setup (no backend)
+- Voice and language controls for the HR interviewer
+- Textarea to edit your interview script
+- One-click Start/Stop with auto-download recording
+
+## Notes and limitations
+
+- This demo intentionally uses NEXT*PUBLIC*\* keys in the browser. Never ship this to production.
+- Voices are mapped simply (male → ash, female → verse) and can be customized.
+- If you want to capture other participants’ audio, you can extend the mixer to include their Stream tracks.
+- Tested with modern Chromium-based browsers. Safari/Firefox support may vary for MediaRecorder and Realtime.
+
+## Folder of interest
+
+- `src/app/page.tsx` – the entire PoC lives here
+
+## Troubleshooting
+
+- No audio/voice? Verify browser permissions and that your OpenAI key is correct.
+- No call UI? Check Stream API key/secret and that your network allows WebRTC.
+- Empty download? Ensure the assistant started speaking (Auto-speak) and your mic/camera were granted.
