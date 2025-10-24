@@ -154,6 +154,16 @@ export default function Home() {
       }
       setRtState("connecting");
       try {
+        // Selection from UI
+        const selectedVoice = voiceGender === "male" ? "alloy" : "verse";
+        const langInstruction =
+          language === "japanese" ? "Speak Japanese." : "Speak English.";
+        const questionBlock = questions
+          .split(/\r?\n/)
+          .filter((q) => q.trim().length > 0)
+          .map((q, i) => `${i + 1}. ${q.trim()}`)
+          .join(" ");
+
         // Prepare mic stream (reuse provided stream if available)
         let mic: MediaStream;
         if (localAudioStream) {
@@ -202,24 +212,26 @@ export default function Home() {
         dcRef.current = dc;
         dc.onopen = () => {
           if (autoSpeak) {
-            const voice = voiceGender === "male" ? "alloy" : "verse"; // simple mapping for POC
-            const langInstruction =
-              language === "japanese" ? "Speak Japanese." : "Speak English.";
-            const questionBlock = questions
-              .split(/\r?\n/)
-              .filter((q) => q.trim().length > 0)
-              .map((q, i) => `${i + 1}. ${q.trim()}`)
-              .join(" ");
-
-            // Kick off a first response so the assistant speaks back
+            // Update session defaults to enforce voice + instructions
+            dc.send(
+              JSON.stringify({
+                type: "session.update",
+                session: {
+                  voice: selectedVoice,
+                  instructions: `You are an HR interviewer. ${langInstruction} Ask questions one by one, allow time for spoken answers, and provide brief follow-ups when helpful. Only proceed to the next question after the candidate stops speaking. The interview questions are: ${questionBlock}`,
+                },
+              })
+            );
+            // Then create the first audio response
             dc.send(
               JSON.stringify({
                 type: "response.create",
                 response: {
-                  instructions: `You are an HR interviewer. ${langInstruction} Ask questions one by one, allow time for spoken answers, and provide brief follow-ups when helpful. Start with a short greeting, then ask the first question. The interview questions are: ${questionBlock}`,
+                  instructions:
+                    "Start with a short greeting, then ask the first interview question.",
                   modalities: ["audio"],
                   conversation: "default",
-                  audio: { voice },
+                  audio: { voice: selectedVoice },
                 },
               })
             );
@@ -231,7 +243,9 @@ export default function Home() {
 
         const baseUrl = "https://api.openai.com/v1/realtime";
         const model = "gpt-4o-realtime-preview-2024-12-17";
-        const url = `${baseUrl}?model=${encodeURIComponent(model)}&voice=alloy`;
+        const url = `${baseUrl}?model=${encodeURIComponent(
+          model
+        )}&voice=${encodeURIComponent(selectedVoice)}`;
 
         const sdpResponse = await fetch(url, {
           method: "POST",
