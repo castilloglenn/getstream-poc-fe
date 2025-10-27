@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StreamVideo, StreamVideoClient } from "@stream-io/video-react-sdk";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 import {
@@ -46,11 +46,11 @@ export default function Home() {
   const [language, setLanguage] = useState<"english" | "japanese">("english");
   const [questions, setQuestions] = useState(
     [
-      "Tell me about yourself.",
-      "Why are you interested in this role?",
-      "Describe a challenging project and your impact.",
-      "What are your strengths and areas for growth?",
-      "Do you have any questions for us?",
+      "We’re testing this voice and captions feature—how does my audio sound?",
+      "What did you have for lunch or plan to have?",
+      "Share one quick productivity tip you like.",
+      "What are you working on right now?",
+      "Would you like me to summarize what you just said?",
     ].join("\n")
   );
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -83,10 +83,59 @@ export default function Home() {
   const userVADCleanupRef = useRef<null | (() => void)>(null);
   const aiVADCleanupRef = useRef<null | (() => void)>(null);
   const [showCaptions, setShowCaptions] = useState(true);
+  const captionsContainerRef = useRef<HTMLDivElement | null>(null);
   const languageCode = useMemo(
     () => (language === "japanese" ? "ja" : "en"),
     [language]
   );
+
+  // ---- Script reading (teleprompter) ----
+  const [scriptText, setScriptText] = useState<string>(
+    [
+      "Test Assistant: Hi there! We’re testing voice and live captions—when you’re ready, start reading this script.",
+      "You: Hey! I’m just running a quick test of the audio and transcription features.",
+      "Test Assistant: Great. How does the audio sound on your side?",
+      "You: It sounds clear enough for a demo in the office.",
+      "Test Assistant: Awesome. What are you working on right now?",
+      "You: I’m currently testing the live captions and making sure the UI updates smoothly.",
+      "Test Assistant: Nice. Share one quick productivity tip you like.",
+      "You: I like batching messages and turning off notifications for 30 minutes to focus.",
+      "Test Assistant: Last one—would you like me to summarize what you said as part of the test?",
+      "You: Yes, please summarize it to confirm everything’s working.",
+    ].join("\n")
+  );
+  const [readingMode, setReadingMode] = useState<boolean>(false);
+  const [scriptFontSize, setScriptFontSize] = useState<number>(20);
+  const [scrollSpeed, setScrollSpeed] = useState<number>(0); // pixels per second; 0 = manual
+  const scriptContainerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!readingMode || scrollSpeed <= 0) return;
+    const el = scriptContainerRef.current;
+    if (!el) return;
+    const intervalMs = 100; // update every 100ms
+    const step = (scrollSpeed / 1000) * intervalMs; // px per tick
+    const id = window.setInterval(() => {
+      if (!scriptContainerRef.current) return;
+      const c = scriptContainerRef.current;
+      const atBottom = c.scrollTop + c.clientHeight >= c.scrollHeight - 2;
+      if (atBottom) {
+        window.clearInterval(id);
+        return;
+      }
+      c.scrollTop = Math.min(c.scrollTop + step, c.scrollHeight);
+    }, intervalMs);
+    return () => window.clearInterval(id);
+  }, [readingMode, scrollSpeed, scriptText]);
+  // Auto-scroll captions to bottom when new items arrive (if user is near bottom)
+  useEffect(() => {
+    const el = captionsContainerRef.current;
+    if (!el || !showCaptions) return;
+    const delta = el.scrollHeight - el.scrollTop - el.clientHeight;
+    // If within 80px of bottom, snap to bottom on new caption
+    if (delta < 80) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [captions.length, showCaptions]);
 
   // ---- Captions helpers ----
   const appendCaption = useCallback(
@@ -381,7 +430,7 @@ export default function Home() {
         // Selection from UI
         const selectedVoice = voiceGender === "male" ? "ash" : "alloy";
         const langInstruction =
-          language === "japanese" ? "Japanese" : "English.";
+          language === "japanese" ? "Japanese" : "English";
         const questionBlock = questions
           .split(/\r?\n/)
           .filter((q) => q.trim().length > 0)
@@ -454,11 +503,12 @@ export default function Home() {
                   voice: selectedVoice,
                   instructions:
                     `You should speak only in ${langInstruction}. ` +
-                    `You are an HR interviewer. ` +
-                    `Ask questions one by one, allow time for spoken answers, ` +
-                    `and provide brief follow-ups when helpful. Only proceed ` +
-                    `to the next question after the candidate stops speaking. ` +
-                    `The interview questions are: ${questionBlock}`,
+                    `You are a friendly AI test assistant helping demo a voice and captions feature in an office environment. ` +
+                    `Keep responses concise (1–2 sentences). Speak in a neutral, office-safe tone. ` +
+                    `Ask one light question at a time about neutral topics (audio quality, lunch plans, productivity tips, current tasks). ` +
+                    `Wait until the user finishes speaking before continuing. ` +
+                    `If appropriate, mention this is a test of the voice and caption system. ` +
+                    `The test prompts are: ${questionBlock}`,
                 },
               })
             );
@@ -469,7 +519,7 @@ export default function Home() {
                 response: {
                   instructions:
                     `You should speak only in ${langInstruction}. ` +
-                    "Start with a short greeting, then ask the first interview question.",
+                    "Start with a brief greeting that mentions we’re testing the voice and captions, then ask the first light, neutral question.",
                   modalities: ["audio", "text"],
                   conversation: "default",
                   audio: { voice: selectedVoice },
@@ -932,6 +982,98 @@ export default function Home() {
         </section>
       ) : null}
 
+      {/* Reading script */}
+      <section className="border rounded p-3">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-medium">Reading script</h2>
+          <div className="flex items-center gap-3 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={readingMode}
+                onChange={(e) => setReadingMode(e.target.checked)}
+              />
+              Reading mode (auto-scroll)
+            </label>
+            <label className="flex items-center gap-2">
+              Font
+              <input
+                type="range"
+                min={14}
+                max={36}
+                value={scriptFontSize}
+                onChange={(e) => setScriptFontSize(Number(e.target.value))}
+              />
+              <span>{scriptFontSize}px</span>
+            </label>
+            <label className="flex items-center gap-2">
+              Scroll
+              <input
+                type="range"
+                min={0}
+                max={120}
+                step={5}
+                value={scrollSpeed}
+                onChange={(e) => setScrollSpeed(Number(e.target.value))}
+              />
+              <span>{scrollSpeed}px/s</span>
+            </label>
+            <button
+              className="px-2 py-1 border rounded"
+              onClick={() => {
+                setScriptText(
+                  [
+                    "Test Assistant: Hi there! We’re testing voice and live captions—when you’re ready, start reading this script.",
+                    "You: Hey! I’m just running a quick test of the audio and transcription features.",
+                    "Test Assistant: Great. How does the audio sound on your side?",
+                    "You: It sounds clear enough for a demo in the office.",
+                    "Test Assistant: Awesome. What are you working on right now?",
+                    "You: I’m currently testing the live captions and making sure the UI updates smoothly.",
+                    "Test Assistant: Nice. Share one quick productivity tip you like.",
+                    "You: I like batching messages and turning off notifications for 30 minutes to focus.",
+                    "Test Assistant: Last one—would you like me to summarize what you said as part of the test?",
+                    "You: Yes, please summarize it to confirm everything’s working.",
+                  ].join("\n")
+                );
+                // Snap to top for a fresh read
+                setTimeout(() => {
+                  if (scriptContainerRef.current) {
+                    scriptContainerRef.current.scrollTop = 0;
+                  }
+                }, 0);
+              }}
+            >
+              Load sample
+            </button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="flex flex-col gap-2">
+            <span className="text-sm text-gray-600">Your script</span>
+            <textarea
+              className="border rounded p-2 min-h-40"
+              value={scriptText}
+              onChange={(e) => setScriptText(e.target.value)}
+              placeholder={"Paste or write your script here..."}
+            />
+          </label>
+          <div className="flex flex-col gap-2">
+            <span className="text-sm text-gray-600">Reader</span>
+            <div
+              ref={scriptContainerRef}
+              className="border rounded p-3 h-60 overflow-auto bg-white"
+              style={{ fontSize: `${scriptFontSize}px`, lineHeight: 1.5 }}
+            >
+              {scriptText.split(/\r?\n/).map((line, i) => (
+                <p key={i} className="mb-2">
+                  {line.trim().length === 0 ? <span>&nbsp;</span> : line}
+                </p>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Live Captions */}
       <section className="border rounded p-3">
         <div className="flex items-center justify-between mb-2">
@@ -946,7 +1088,10 @@ export default function Home() {
           </label>
         </div>
         {showCaptions ? (
-          <div className="border rounded p-2 h-48 overflow-auto bg-gray-50">
+          <div
+            ref={captionsContainerRef}
+            className="border rounded p-2 h-48 overflow-auto bg-gray-50"
+          >
             {captions.length === 0 ? (
               <p className="text-sm text-gray-500">No captions yet…</p>
             ) : (
