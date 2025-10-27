@@ -96,42 +96,22 @@ export default function Home() {
   );
 
   // ---- Script reading (teleprompter) ----
-  const [scriptText, setScriptText] = useState<string>(
+  const [scriptText] = useState<string>(
     [
-      "Test Assistant: Hi there! We’re testing voice and live captions—when you’re ready, start reading this script.",
-      "You: Hey! I’m just running a quick test of the audio and transcription features.",
-      "Test Assistant: Great. How does the audio sound on your side?",
-      "You: It sounds clear enough for a demo in the office.",
-      "Test Assistant: Awesome. What are you working on right now?",
-      "You: I’m currently testing the live captions and making sure the UI updates smoothly.",
-      "Test Assistant: Nice. Share one quick productivity tip you like.",
-      "You: I like batching messages and turning off notifications for 30 minutes to focus.",
-      "Test Assistant: Last one—would you like me to summarize what you said as part of the test?",
-      "You: Yes, please summarize it to confirm everything’s working.",
+      "We’re testing this voice and captions feature—how does my audio sound?",
+      "(You): It sounds clear enough for a demo.",
+      "",
+      "What are you working on right now?",
+      "(You): I’m currently testing the live captions and making sure the UI updates smoothly.",
+      "",
+      "Share one quick productivity tip you like.",
+      "(You): I like batching messages and turning off notifications for 30 minutes to focus.",
+      "",
+      "Would you like me to summarize what you just said?",
+      "(You): Yes, please summarize it to confirm everything’s working.",
     ].join("\n")
   );
-  const [readingMode, setReadingMode] = useState<boolean>(false);
-  const [scriptFontSize, setScriptFontSize] = useState<number>(20);
-  const [scrollSpeed, setScrollSpeed] = useState<number>(0); // pixels per second; 0 = manual
-  const scriptContainerRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!readingMode || scrollSpeed <= 0) return;
-    const el = scriptContainerRef.current;
-    if (!el) return;
-    const intervalMs = 100; // update every 100ms
-    const step = (scrollSpeed / 1000) * intervalMs; // px per tick
-    const id = window.setInterval(() => {
-      if (!scriptContainerRef.current) return;
-      const c = scriptContainerRef.current;
-      const atBottom = c.scrollTop + c.clientHeight >= c.scrollHeight - 2;
-      if (atBottom) {
-        window.clearInterval(id);
-        return;
-      }
-      c.scrollTop = Math.min(c.scrollTop + step, c.scrollHeight);
-    }, intervalMs);
-    return () => window.clearInterval(id);
-  }, [readingMode, scrollSpeed, scriptText]);
+  const [scriptFontSize, setScriptFontSize] = useState<number>(16);
   // Auto-scroll captions to bottom when new items arrive (if user is near bottom)
   useEffect(() => {
     const el = captionsContainerRef.current;
@@ -521,8 +501,8 @@ export default function Home() {
                 },
                 instructions:
                   `You should speak only in ${langInstruction}. ` +
-                  `You are a friendly AI test assistant helping demo a voice and captions feature in an office environment. ` +
-                  `Keep responses concise (1–2 sentences). Speak in a neutral, office-safe tone. ` +
+                  `You are a friendly AI test assistant helping demo a voice and captions feature. ` +
+                  `Keep responses concise (1–2 sentences). Speak in a neutral tone. ` +
                   `Ask one light question at a time about neutral topics (audio quality, productivity tips, current tasks). ` +
                   `Wait until the user finishes speaking before continuing. ` +
                   `If appropriate, mention this is a test of the voice and caption system. ` +
@@ -870,6 +850,157 @@ export default function Home() {
         Frontend-only POC: Stream Video + OpenAI Realtime
       </h1>
 
+      {/* Reading script */}
+      <section className="border rounded p-3">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-medium">Reading script</h2>
+          <div className="flex items-center gap-3 text-sm">
+            <label className="flex items-center gap-2">
+              Font
+              <input
+                type="range"
+                min={14}
+                max={36}
+                value={scriptFontSize}
+                onChange={(e) => setScriptFontSize(Number(e.target.value))}
+              />
+              <span>{scriptFontSize}px</span>
+            </label>
+          </div>
+        </div>
+        <div className="grid gap-3">
+          <div className="flex flex-col gap-2">
+            <span className="text-sm text-gray-600">Reader</span>
+            <div
+              className="border rounded p-3 h-60 overflow-auto bg-white"
+              style={{ fontSize: `${scriptFontSize}px`, lineHeight: 1.5 }}
+            >
+              {scriptText.split(/\r?\n/).map((line, i) => (
+                <p key={i} className="mb-2">
+                  {line.trim().length === 0 ? <span>&nbsp;</span> : line}
+                </p>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Call and Live Captions side-by-side */}
+      <section className="border rounded p-3">
+        <h2 className="text-lg font-medium mb-2">Call and live captions</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            {client && call ? (
+              <div className="mt-2">
+                <StreamVideo client={client}>
+                  {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                  <StreamCall call={call as any}>
+                    <InCallUI />
+                  </StreamCall>
+                </StreamVideo>
+              </div>
+            ) : (
+              <div className="border rounded p-3 text-sm text-gray-600">
+                Start session to join the call and see the video here.
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-medium">Live captions</h3>
+              <label className="text-sm flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={showCaptions}
+                  onChange={(e) => setShowCaptions(e.target.checked)}
+                />
+                Show
+              </label>
+            </div>
+            {showCaptions ? (
+              <div
+                ref={captionsContainerRef}
+                className="border rounded p-2 h-48 overflow-auto bg-gray-50"
+              >
+                {captions.length === 0 ? (
+                  <p className="text-sm text-gray-500">No captions yet…</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {captions.slice(-100).map((c) => {
+                      const d = new Date(c.ts);
+                      const hh = String(d.getHours()).padStart(2, "0");
+                      const mm = String(d.getMinutes()).padStart(2, "0");
+                      const ss = String(d.getSeconds()).padStart(2, "0");
+                      return (
+                        <li key={c.id} className="text-sm">
+                          <span className="text-gray-500 mr-2">
+                            [{hh}:{mm}:{ss}]
+                          </span>
+                          <span
+                            className={
+                              c.speaker === "You"
+                                ? "text-emerald-700"
+                                : "text-indigo-700"
+                            }
+                          >
+                            {c.speaker}:
+                          </span>{" "}
+                          <span>{c.text}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            ) : null}
+            {transcriptText ? (
+              <div className="mt-3">
+                <h4 className="font-medium mb-1">Final transcript</h4>
+                <textarea
+                  readOnly
+                  className="w-full border rounded p-2 text-sm h-40"
+                  value={transcriptText}
+                />
+                <div className="mt-2 flex gap-2">
+                  <button
+                    className="px-3 py-1 rounded bg-gray-800 text-white text-sm"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(transcriptText);
+                        alert("Transcript copied to clipboard");
+                      } catch {}
+                    }}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded bg-gray-200 text-sm"
+                    onClick={() => {
+                      const blob = new Blob([transcriptText], {
+                        type: "text/plain",
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      const ts = new Date();
+                      a.download = `transcript-${ts
+                        .toISOString()
+                        .replace(/[:.]/g, "-")}.txt`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      setTimeout(() => URL.revokeObjectURL(url), 5000);
+                    }}
+                  >
+                    Download
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
       {/* Minimal Controls */}
       <section className="border rounded p-3">
         <h2 className="text-lg font-medium mb-2">Configuration</h2>
@@ -1066,208 +1197,6 @@ export default function Home() {
           This POC runs entirely in the browser. Secrets in NEXT_PUBLIC_* are
           for testing only; do not use in production.
         </p>
-      </section>
-
-      {/* Call UI (shown when running) */}
-      {client && call ? (
-        <section className="border rounded p-3">
-          <h2 className="text-lg font-medium mb-2">Call</h2>
-          <div className="mt-2">
-            <StreamVideo client={client}>
-              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-              <StreamCall call={call as any}>
-                <InCallUI />
-              </StreamCall>
-            </StreamVideo>
-          </div>
-        </section>
-      ) : null}
-
-      {/* Reading script */}
-      <section className="border rounded p-3">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-medium">Reading script</h2>
-          <div className="flex items-center gap-3 text-sm">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={readingMode}
-                onChange={(e) => setReadingMode(e.target.checked)}
-              />
-              Reading mode (auto-scroll)
-            </label>
-            <label className="flex items-center gap-2">
-              Font
-              <input
-                type="range"
-                min={14}
-                max={36}
-                value={scriptFontSize}
-                onChange={(e) => setScriptFontSize(Number(e.target.value))}
-              />
-              <span>{scriptFontSize}px</span>
-            </label>
-            <label className="flex items-center gap-2">
-              Scroll
-              <input
-                type="range"
-                min={0}
-                max={120}
-                step={5}
-                value={scrollSpeed}
-                onChange={(e) => setScrollSpeed(Number(e.target.value))}
-              />
-              <span>{scrollSpeed}px/s</span>
-            </label>
-            <button
-              className="px-2 py-1 border rounded"
-              onClick={() => {
-                setScriptText(
-                  [
-                    "Test Assistant: Hi there! We’re testing voice and live captions—when you’re ready, start reading this script.",
-                    "You: Hey! I’m just running a quick test of the audio and transcription features.",
-                    "Test Assistant: Great. How does the audio sound on your side?",
-                    "You: It sounds clear enough for a demo in the office.",
-                    "Test Assistant: Awesome. What are you working on right now?",
-                    "You: I’m currently testing the live captions and making sure the UI updates smoothly.",
-                    "Test Assistant: Nice. Share one quick productivity tip you like.",
-                    "You: I like batching messages and turning off notifications for 30 minutes to focus.",
-                    "Test Assistant: Last one—would you like me to summarize what you said as part of the test?",
-                    "You: Yes, please summarize it to confirm everything’s working.",
-                  ].join("\n")
-                );
-                // Snap to top for a fresh read
-                setTimeout(() => {
-                  if (scriptContainerRef.current) {
-                    scriptContainerRef.current.scrollTop = 0;
-                  }
-                }, 0);
-              }}
-            >
-              Load sample
-            </button>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="flex flex-col gap-2">
-            <span className="text-sm text-gray-600">Your script</span>
-            <textarea
-              className="border rounded p-2 min-h-40"
-              value={scriptText}
-              onChange={(e) => setScriptText(e.target.value)}
-              placeholder={"Paste or write your script here..."}
-            />
-          </label>
-          <div className="flex flex-col gap-2">
-            <span className="text-sm text-gray-600">Reader</span>
-            <div
-              ref={scriptContainerRef}
-              className="border rounded p-3 h-60 overflow-auto bg-white"
-              style={{ fontSize: `${scriptFontSize}px`, lineHeight: 1.5 }}
-            >
-              {scriptText.split(/\r?\n/).map((line, i) => (
-                <p key={i} className="mb-2">
-                  {line.trim().length === 0 ? <span>&nbsp;</span> : line}
-                </p>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Live Captions */}
-      <section className="border rounded p-3">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-medium">Live captions</h2>
-          <label className="text-sm flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={showCaptions}
-              onChange={(e) => setShowCaptions(e.target.checked)}
-            />
-            Show
-          </label>
-        </div>
-        {showCaptions ? (
-          <div
-            ref={captionsContainerRef}
-            className="border rounded p-2 h-48 overflow-auto bg-gray-50"
-          >
-            {captions.length === 0 ? (
-              <p className="text-sm text-gray-500">No captions yet…</p>
-            ) : (
-              <ul className="space-y-1">
-                {captions.slice(-100).map((c) => {
-                  const d = new Date(c.ts);
-                  const hh = String(d.getHours()).padStart(2, "0");
-                  const mm = String(d.getMinutes()).padStart(2, "0");
-                  const ss = String(d.getSeconds()).padStart(2, "0");
-                  return (
-                    <li key={c.id} className="text-sm">
-                      <span className="text-gray-500 mr-2">
-                        [{hh}:{mm}:{ss}]
-                      </span>
-                      <span
-                        className={
-                          c.speaker === "You"
-                            ? "text-emerald-700"
-                            : "text-indigo-700"
-                        }
-                      >
-                        {c.speaker}:
-                      </span>{" "}
-                      <span>{c.text}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        ) : null}
-        {transcriptText ? (
-          <div className="mt-3">
-            <h3 className="font-medium mb-1">Final transcript</h3>
-            <textarea
-              readOnly
-              className="w-full border rounded p-2 text-sm h-40"
-              value={transcriptText}
-            />
-            <div className="mt-2 flex gap-2">
-              <button
-                className="px-3 py-1 rounded bg-gray-800 text-white text-sm"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(transcriptText);
-                    alert("Transcript copied to clipboard");
-                  } catch {}
-                }}
-              >
-                Copy
-              </button>
-              <button
-                className="px-3 py-1 rounded bg-gray-200 text-sm"
-                onClick={() => {
-                  const blob = new Blob([transcriptText], {
-                    type: "text/plain",
-                  });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  const ts = new Date();
-                  a.download = `transcript-${ts
-                    .toISOString()
-                    .replace(/[:.]/g, "-")}.txt`;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  setTimeout(() => URL.revokeObjectURL(url), 5000);
-                }}
-              >
-                Download
-              </button>
-            </div>
-          </div>
-        ) : null}
       </section>
     </div>
   );
