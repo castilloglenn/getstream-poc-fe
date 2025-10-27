@@ -65,6 +65,232 @@ export default function Home() {
   const [sessionState, setSessionState] = useState<SessionState>("idle");
   const mixedRecorderRef = useRef<MediaRecorder | null>(null);
 
+  // ---- Live captions (Whisper) ----
+  type CaptionItem = {
+    id: string;
+    speaker: "You" | "AI";
+    text: string;
+    ts: number; // epoch ms
+  };
+  const [captions, setCaptions] = useState<CaptionItem[]>([]);
+  const [transcriptText, setTranscriptText] = useState<string>("");
+  const userCaptionRecRef = useRef<MediaRecorder | null>(null);
+  const aiCaptionRecRef = useRef<MediaRecorder | null>(null);
+  const userUploadBusyRef = useRef(false);
+  const aiUploadBusyRef = useRef(false);
+  const userCaptionActiveRef = useRef(false);
+  const aiCaptionActiveRef = useRef(false);
+  const userVADCleanupRef = useRef<null | (() => void)>(null);
+  const aiVADCleanupRef = useRef<null | (() => void)>(null);
+  const [showCaptions, setShowCaptions] = useState(true);
+  const languageCode = useMemo(
+    () => (language === "japanese" ? "ja" : "en"),
+    [language]
+  );
+
+  // ---- Captions helpers ----
+  const appendCaption = useCallback(
+    (item: { speaker: "You" | "AI"; text: string }) => {
+      const ts = Date.now();
+      const id = `${item.speaker}-${ts}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const cleaned = item.text.trim();
+      if (!cleaned) return;
+      setCaptions((prev) => [
+        ...prev,
+        { id, speaker: item.speaker, text: cleaned, ts },
+      ]);
+    },
+    []
+  );
+
+  // (Deprecated) MediaRecorder loop kept for reference only; replaced by VAD+WAV
+
+  // WAV encoder (PCM16)
+  const encodeWavPCM16 = useCallback(
+    (samples: Float32Array, sampleRate: number) => {
+      const buffer = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(buffer);
+      const writeString = (offset: number, str: string) => {
+        for (let i = 0; i < str.length; i++)
+          view.setUint8(offset + i, str.charCodeAt(i));
+      };
+      // RIFF header
+      writeString(0, "RIFF");
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeString(8, "WAVE");
+      // fmt chunk
+      writeString(12, "fmt ");
+      view.setUint32(16, 16, true); // PCM
+      view.setUint16(20, 1, true); // format: PCM
+      view.setUint16(22, 1, true); // channels: mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true); // byte rate
+      view.setUint16(32, 2, true); // block align
+      view.setUint16(34, 16, true); // bits per sample
+      // data chunk
+      writeString(36, "data");
+      view.setUint32(40, samples.length * 2, true);
+      // PCM samples
+      let offset = 44;
+      for (let i = 0; i < samples.length; i++, offset += 2) {
+        const s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+      return new Blob([view], { type: "audio/wav" });
+    },
+    []
+  );
+
+  // VAD-based WAV transcriber
+  const startVADTranscriber = useCallback(
+    (stream: MediaStream, speaker: "You" | "AI") => {
+      const isUser = speaker === "You";
+      const activeRef = isUser ? userCaptionActiveRef : aiCaptionActiveRef;
+      const cleanupRef = isUser ? userVADCleanupRef : aiVADCleanupRef;
+      const busyRef = isUser ? userUploadBusyRef : aiUploadBusyRef;
+
+      const W = window as typeof window & {
+        webkitAudioContext?: typeof AudioContext;
+      };
+      const ACtor: typeof AudioContext =
+        W.AudioContext || W.webkitAudioContext || AudioContext;
+      const ctx = new ACtor();
+      const source = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+
+      const sr = ctx.sampleRate;
+      const threshold = 0.015; // RMS threshold
+      const hangoverMs = 300;
+      const minVoiceMs = 400;
+      const maxChunkMs = 4000;
+
+      const buffer: Float32Array[] = [];
+      let voiced = false;
+      let lastVoiceTs = 0;
+      // Track when a voiced segment starts (reserved for future UI/metrics)
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      let chunkStartTs = 0;
+
+      const nowMs = () => performance.now();
+      const bufferedMs = () =>
+        (buffer.reduce((sum, arr) => sum + arr.length, 0) / sr) * 1000;
+
+      const flush = async () => {
+        const totalLen = buffer.reduce((s, a) => s + a.length, 0);
+        if (totalLen === 0) return;
+        const total = new Float32Array(totalLen);
+        let off = 0;
+        for (const arr of buffer) {
+          total.set(arr, off);
+          off += arr.length;
+        }
+        buffer.length = 0;
+        voiced = false;
+        chunkStartTs = 0;
+
+        // Skip too small
+        if (total.length < sr * 0.25) return; // < 250ms
+
+        // Encode WAV PCM16
+        const wav = encodeWavPCM16(total, sr);
+        if (wav.size < 8000) return;
+        if (busyRef.current) return;
+        busyRef.current = true;
+        try {
+          const fd = new FormData();
+          const f = new File(
+            [wav],
+            `${speaker.toLowerCase()}-${Date.now()}.wav`,
+            { type: "audio/wav" }
+          );
+          fd.append("file", f);
+          fd.append("language", languageCode);
+          const res = await fetch("/api/transcribe", {
+            method: "POST",
+            body: fd,
+          });
+          if (res.ok) {
+            const data = (await res.json()) as { text?: string };
+            if (data?.text) appendCaption({ speaker, text: data.text });
+          }
+        } catch {
+          // ignore
+        } finally {
+          busyRef.current = false;
+        }
+      };
+
+      processor.onaudioprocess = (ev) => {
+        if (!activeRef.current) return;
+        const input = ev.inputBuffer.getChannelData(0);
+        // Copy to avoid reuse of underlying buffer
+        const copy = new Float32Array(input.length);
+        copy.set(input);
+        // Compute RMS
+        let sumsq = 0;
+        for (let i = 0; i < copy.length; i++) {
+          const v = copy[i];
+          sumsq += v * v;
+        }
+        const rms = Math.sqrt(sumsq / copy.length);
+        const t = nowMs();
+        if (rms >= threshold) {
+          lastVoiceTs = t;
+          if (!voiced) {
+            voiced = true;
+            chunkStartTs = t; // tracked for potential future UI timing
+          }
+        }
+
+        if (voiced) buffer.push(copy);
+
+        const sinceVoice = t - lastVoiceTs;
+        const dur = bufferedMs();
+        if (
+          voiced &&
+          (dur >= maxChunkMs || (sinceVoice > hangoverMs && dur >= minVoiceMs))
+        ) {
+          // finish chunk
+          void flush();
+        }
+      };
+
+      source.connect(processor);
+      processor.connect(ctx.destination); // necessary in some browsers to keep processor running
+
+      activeRef.current = true;
+      cleanupRef.current = () => {
+        activeRef.current = false;
+        try {
+          source.disconnect();
+        } catch {}
+        try {
+          processor.disconnect();
+        } catch {}
+        try {
+          ctx.close();
+        } catch {}
+      };
+    },
+    [appendCaption, encodeWavPCM16, languageCode]
+  );
+
+  const buildFinalTranscript = useCallback(() => {
+    const all = captions
+      .sort((a, b) => a.ts - b.ts)
+      .map((c) => {
+        const d = new Date(c.ts);
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        const ss = String(d.getSeconds()).padStart(2, "0");
+        return `[${hh}:${mm}:${ss}] ${c.speaker}: ${c.text}`;
+      })
+      .join("\n");
+    setTranscriptText(all);
+  }, [captions]);
+
   // ---- Helpers ----
   const streamUser = useMemo(
     () => ({ id: userId, name: userName }),
@@ -203,6 +429,16 @@ export default function Home() {
             );
             node.connect(audioDest);
           }
+          // Start AI captions transcriber once the remote audio stream becomes available
+          const hasAudio = e.streams[0]?.getAudioTracks?.().length > 0;
+          if (hasAudio && !aiCaptionActiveRef.current) {
+            try {
+              const aiOnlyStream = new MediaStream([
+                e.streams[0].getAudioTracks()[0],
+              ]);
+              startVADTranscriber(aiOnlyStream, "AI");
+            } catch {}
+          }
         };
 
         // Control channel for events
@@ -234,7 +470,7 @@ export default function Home() {
                   instructions:
                     `You should speak only in ${langInstruction}. ` +
                     "Start with a short greeting, then ask the first interview question.",
-                  modalities: ["audio"],
+                  modalities: ["audio", "text"],
                   conversation: "default",
                   audio: { voice: selectedVoice },
                 },
@@ -242,6 +478,7 @@ export default function Home() {
             );
           }
         };
+        // We rely on Whisper-based captions for AI audio; omit text deltas to avoid duplicates
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -273,7 +510,14 @@ export default function Home() {
         );
       }
     },
-    [autoSpeak, openAIKey, language, questions, voiceGender]
+    [
+      autoSpeak,
+      openAIKey,
+      language,
+      questions,
+      startVADTranscriber,
+      voiceGender,
+    ]
   );
 
   const stopRealtime = useCallback(() => {
@@ -425,13 +669,29 @@ export default function Home() {
       mixedRecorderRef.current = rec;
       rec.start(250);
 
+      // 7) Start user (mic) captions transcriber
+      try {
+        const micTracks2 = localAV.getAudioTracks();
+        if (micTracks2.length > 0 && !userCaptionActiveRef.current) {
+          const micOnly = new MediaStream([micTracks2[0]]);
+          startVADTranscriber(micOnly, "You");
+        }
+      } catch {}
+
       setSessionState("running");
     } catch (e) {
       console.error("Failed to start session", e);
       setSessionState("idle");
       alert("Failed to start session. Check permissions and keys.");
     }
-  }, [apiKey, apiSecret, joinStreamCall, openAIKey, startRealtime]);
+  }, [
+    apiKey,
+    apiSecret,
+    joinStreamCall,
+    openAIKey,
+    startRealtime,
+    startVADTranscriber,
+  ]);
 
   const stopAll = useCallback(async () => {
     setSessionState("stopping");
@@ -440,6 +700,18 @@ export default function Home() {
       mixedRecorderRef.current?.stop();
     } catch {}
     mixedRecorderRef.current = null;
+
+    // Stop caption recorders
+    try {
+      userCaptionActiveRef.current = false;
+      userCaptionRecRef.current?.stop();
+    } catch {}
+    userCaptionRecRef.current = null;
+    try {
+      aiCaptionActiveRef.current = false;
+      aiCaptionRecRef.current?.stop();
+    } catch {}
+    aiCaptionRecRef.current = null;
 
     // Stop OpenAI Realtime
     try {
@@ -470,8 +742,10 @@ export default function Home() {
     // If onstop didn't fire (no chunks), reset state anyway
     setTimeout(() => {
       if (sessionState !== "idle") setSessionState("idle");
+      // Build final transcript when session ends
+      buildFinalTranscript();
     }, 500);
-  }, [call, client, sessionState, stopRealtime]);
+  }, [buildFinalTranscript, call, client, sessionState, stopRealtime]);
 
   // ---- UI ----
   const InCallUI = () => {
@@ -657,6 +931,98 @@ export default function Home() {
           </div>
         </section>
       ) : null}
+
+      {/* Live Captions */}
+      <section className="border rounded p-3">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-medium">Live captions</h2>
+          <label className="text-sm flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showCaptions}
+              onChange={(e) => setShowCaptions(e.target.checked)}
+            />
+            Show
+          </label>
+        </div>
+        {showCaptions ? (
+          <div className="border rounded p-2 h-48 overflow-auto bg-gray-50">
+            {captions.length === 0 ? (
+              <p className="text-sm text-gray-500">No captions yet…</p>
+            ) : (
+              <ul className="space-y-1">
+                {captions.slice(-100).map((c) => {
+                  const d = new Date(c.ts);
+                  const hh = String(d.getHours()).padStart(2, "0");
+                  const mm = String(d.getMinutes()).padStart(2, "0");
+                  const ss = String(d.getSeconds()).padStart(2, "0");
+                  return (
+                    <li key={c.id} className="text-sm">
+                      <span className="text-gray-500 mr-2">
+                        [{hh}:{mm}:{ss}]
+                      </span>
+                      <span
+                        className={
+                          c.speaker === "You"
+                            ? "text-emerald-700"
+                            : "text-indigo-700"
+                        }
+                      >
+                        {c.speaker}:
+                      </span>{" "}
+                      <span>{c.text}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        ) : null}
+        {transcriptText ? (
+          <div className="mt-3">
+            <h3 className="font-medium mb-1">Final transcript</h3>
+            <textarea
+              readOnly
+              className="w-full border rounded p-2 text-sm h-40"
+              value={transcriptText}
+            />
+            <div className="mt-2 flex gap-2">
+              <button
+                className="px-3 py-1 rounded bg-gray-800 text-white text-sm"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(transcriptText);
+                    alert("Transcript copied to clipboard");
+                  } catch {}
+                }}
+              >
+                Copy
+              </button>
+              <button
+                className="px-3 py-1 rounded bg-gray-200 text-sm"
+                onClick={() => {
+                  const blob = new Blob([transcriptText], {
+                    type: "text/plain",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  const ts = new Date();
+                  a.download = `transcript-${ts
+                    .toISOString()
+                    .replace(/[:.]/g, "-")}.txt`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  setTimeout(() => URL.revokeObjectURL(url), 5000);
+                }}
+              >
+                Download
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </section>
     </div>
   );
 }
