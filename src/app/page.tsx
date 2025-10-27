@@ -1001,9 +1001,32 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Minimal Controls */}
       <section className="border rounded p-3">
-        <h2 className="text-lg font-medium mb-2">Configuration</h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-medium mb-2">Configuration</h2>
+          {/* Unified Start/Stop */}
+          <div className="flex items-center gap-3 mt-2">
+            {sessionState === "idle" || sessionState === "stopping" ? (
+              <button
+                className="px-4 py-2 rounded bg-emerald-600 text-white"
+                onClick={startAll}
+                disabled={sessionState === "stopping"}
+              >
+                {sessionState === "stopping" ? "Stopping…" : "Start session"}
+              </button>
+            ) : (
+              <button
+                className="px-4 py-2 rounded bg-red-600 text-white"
+                onClick={stopAll}
+                disabled={sessionState === "starting"}
+              >
+                {sessionState === "starting" ? "Starting…" : "Stop & save"}
+              </button>
+            )}
+            <span className="text-sm text-gray-600">Assistant: {rtState}</span>
+          </div>
+        </div>
+        {/* Minimal Controls */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <label className="flex flex-col gap-1">
             <span className="text-sm text-gray-600">
@@ -1170,27 +1193,7 @@ export default function Home() {
             />
           </label>
         </div>
-        {/* Unified Start/Stop */}
-        <div className="flex items-center gap-3 mt-2">
-          {sessionState === "idle" || sessionState === "stopping" ? (
-            <button
-              className="px-4 py-2 rounded bg-emerald-600 text-white"
-              onClick={startAll}
-              disabled={sessionState === "stopping"}
-            >
-              {sessionState === "stopping" ? "Stopping…" : "Start session"}
-            </button>
-          ) : (
-            <button
-              className="px-4 py-2 rounded bg-red-600 text-white"
-              onClick={stopAll}
-              disabled={sessionState === "starting"}
-            >
-              {sessionState === "starting" ? "Starting…" : "Stop & save"}
-            </button>
-          )}
-          <span className="text-sm text-gray-600">Assistant: {rtState}</span>
-        </div>
+
         {/* Hidden audio element to play assistant's realtime audio */}
         <audio ref={remoteAudioRef} autoPlay />
         <p className="text-xs text-gray-500 mt-2">
