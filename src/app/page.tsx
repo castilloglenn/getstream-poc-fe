@@ -44,12 +44,18 @@ export default function Home() {
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [voiceGender, setVoiceGender] = useState<"male" | "female">("male");
   const [language, setLanguage] = useState<"english" | "japanese">("english");
+  // Reply timing controls
+  const [replyDelayMode, setReplyDelayMode] = useState<"fixed" | "random">(
+    "fixed"
+  );
+  const [replyFixedSec, setReplyFixedSec] = useState<number>(3);
+  const [replyRandMinSec, setReplyRandMinSec] = useState<number>(3);
+  const [replyRandMaxSec, setReplyRandMaxSec] = useState<number>(10);
   const [questions, setQuestions] = useState(
     [
       "We’re testing this voice and captions feature—how does my audio sound?",
-      "What did you have for lunch or plan to have?",
-      "Share one quick productivity tip you like.",
       "What are you working on right now?",
+      "Share one quick productivity tip you like.",
       "Would you like me to summarize what you just said?",
     ].join("\n")
   );
@@ -493,25 +499,43 @@ export default function Home() {
         // Control channel for events
         const dc = pc.createDataChannel("oai-events");
         dcRef.current = dc;
+        const computeDelayMs = () => {
+          if (replyDelayMode === "random") {
+            const min = Math.min(replyRandMinSec, replyRandMaxSec);
+            const max = Math.max(replyRandMinSec, replyRandMaxSec);
+            const sec = Math.floor(min + Math.random() * (max - min + 1));
+            return sec * 1000;
+          }
+          return Math.max(0, replyFixedSec) * 1000;
+        };
+        const sendSessionUpdate = () => {
+          const silence = computeDelayMs();
+          dc.send(
+            JSON.stringify({
+              type: "session.update",
+              session: {
+                voice: selectedVoice,
+                turn_detection: {
+                  type: "server_vad",
+                  silence_duration_ms: silence,
+                },
+                instructions:
+                  `You should speak only in ${langInstruction}. ` +
+                  `You are a friendly AI test assistant helping demo a voice and captions feature in an office environment. ` +
+                  `Keep responses concise (1–2 sentences). Speak in a neutral, office-safe tone. ` +
+                  `Ask one light question at a time about neutral topics (audio quality, lunch plans, productivity tips, current tasks). ` +
+                  `Wait until the user finishes speaking before continuing. ` +
+                  `If appropriate, mention this is a test of the voice and caption system. ` +
+                  `The test prompts are: ${questionBlock}`,
+              },
+            })
+          );
+          return silence;
+        };
         dc.onopen = () => {
           if (autoSpeak) {
-            // Update session defaults to enforce voice + instructions
-            dc.send(
-              JSON.stringify({
-                type: "session.update",
-                session: {
-                  voice: selectedVoice,
-                  instructions:
-                    `You should speak only in ${langInstruction}. ` +
-                    `You are a friendly AI test assistant helping demo a voice and captions feature in an office environment. ` +
-                    `Keep responses concise (1–2 sentences). Speak in a neutral, office-safe tone. ` +
-                    `Ask one light question at a time about neutral topics (audio quality, lunch plans, productivity tips, current tasks). ` +
-                    `Wait until the user finishes speaking before continuing. ` +
-                    `If appropriate, mention this is a test of the voice and caption system. ` +
-                    `The test prompts are: ${questionBlock}`,
-                },
-              })
-            );
+            // Update session defaults to enforce voice + instructions + VAD silence duration
+            sendSessionUpdate();
             // Then create the first audio response
             dc.send(
               JSON.stringify({
@@ -528,7 +552,16 @@ export default function Home() {
             );
           }
         };
-        // We rely on Whisper-based captions for AI audio; omit text deltas to avoid duplicates
+        // Update VAD silence for next turns whenever a response completes (randomize if enabled)
+        dc.onmessage = (evt) => {
+          try {
+            const msg = JSON.parse(evt.data);
+            if (msg?.type === "response.completed") {
+              // For the next user turn, refresh turn_detection silence
+              sendSessionUpdate();
+            }
+          } catch {}
+        };
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -565,6 +598,10 @@ export default function Home() {
       openAIKey,
       language,
       questions,
+      replyDelayMode,
+      replyFixedSec,
+      replyRandMaxSec,
+      replyRandMinSec,
       startVADTranscriber,
       voiceGender,
     ]
@@ -924,6 +961,70 @@ export default function Home() {
               <option value="japanese">Japanese</option>
             </select>
           </label>
+          <div className="flex flex-col gap-1">
+            <span className="text-sm text-gray-600">Reply timing</span>
+            <div className="flex items-center gap-2">
+              <select
+                className="border rounded px-2 py-1"
+                value={replyDelayMode}
+                onChange={(e) =>
+                  setReplyDelayMode(e.target.value as "fixed" | "random")
+                }
+              >
+                <option value="fixed">Fixed delay</option>
+                <option value="random">Random delay</option>
+              </select>
+              {replyDelayMode === "fixed" ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <span>Seconds</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={15}
+                    step={1}
+                    className="border rounded px-2 py-1 w-20"
+                    value={replyFixedSec}
+                    onChange={(e) => setReplyFixedSec(Number(e.target.value))}
+                  />
+                </label>
+              ) : (
+                <div className="flex items-center gap-2 text-sm">
+                  <label className="flex items-center gap-1">
+                    <span>Min</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      step={1}
+                      className="border rounded px-2 py-1 w-16"
+                      value={replyRandMinSec}
+                      onChange={(e) =>
+                        setReplyRandMinSec(Number(e.target.value))
+                      }
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <span>Max</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={30}
+                      step={1}
+                      className="border rounded px-2 py-1 w-16"
+                      value={replyRandMaxSec}
+                      onChange={(e) =>
+                        setReplyRandMaxSec(Number(e.target.value))
+                      }
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-gray-500">
+              Controls how long the assistant waits after you stop speaking
+              before replying.
+            </p>
+          </div>
         </div>
         <div className="mb-3">
           <label className="flex flex-col gap-1">
